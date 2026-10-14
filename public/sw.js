@@ -9,7 +9,8 @@ self.addEventListener('install', (event) => {
           '/web/',
           '/web/editor.html',
           '/web/editor-host.js',
-          '/web/favicon.svg' /* PRECACHE_ASSETS */,
+          '/web/favicon.svg',
+          '__PRECACHE_ASSETS__',
         ]),
       )
       .then(() => self.skipWaiting()),
