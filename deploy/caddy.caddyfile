@@ -1,0 +1,8 @@
+# Public service using the existing CrowdSec/country policy, without OAuth.
+futo-notes.maulwurf.fun {
+    import access_public
+    handle @authorized {
+        reverse_proxy http://127.0.0.1:3005
+    }
+    respond ":(" 403
+}

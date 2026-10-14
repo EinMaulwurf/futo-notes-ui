@@ -1,0 +1,28 @@
+{
+  "name": "futo-notes-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build && node scripts/build-sw.mjs",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "svelte": "^5.57.0",
+    "idb": "^8.0.3",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.2.4",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^22.0.0",
+    "fake-indexeddb": "^6.2.4",
+    "svelte-check": "^4.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.5",
+    "vitest": "^4.0.18"
+  }
+}

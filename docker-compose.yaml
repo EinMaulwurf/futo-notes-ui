@@ -1,0 +1,26 @@
+services:
+  sync:
+    image: futotech/notes-server:stable
+    restart: unless-stopped
+    environment:
+      AUTH_MODE: password
+      FUTO_NOTES_PASSWORD_HASH: ${FUTO_NOTES_PASSWORD_HASH:?Run scripts/setup-password.py first}
+      COOKIE_SECURE: "true"
+      PORT: "3000"
+      DATABASE_URL: sqlite:/data/db/notes.db
+      BLOB_DIR: /data/blobs
+      DEV_UI: "false"
+    volumes:
+      - ./data:/data
+    networks: [notes]
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FUTO_NOTES_PORT:-3005}:8080"
+    depends_on:
+      sync:
+        condition: service_healthy
+    networks: [notes]
+networks:
+  notes:

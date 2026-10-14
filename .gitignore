@@ -8,3 +8,5 @@ dist/
 .playwright/
 test-results/
 playwright-report/
+.sync-password
+.npm-cache/

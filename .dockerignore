@@ -1,0 +1,14 @@
+.git
+.agents
+.aws
+.codex
+.research
+.env*
+data
+node_modules
+dist
+.playwright
+test-results
+playwright-report
+.npm-cache
+.sync-password
