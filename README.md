@@ -10,4 +10,4 @@ Initialize a **new** vault with `python3 scripts/setup-password.py`, save `.sync
 
 The server persists encrypted blobs and SQLite in `./data`. The web app keeps an encrypted offline cache, saves durable pending edits, preserves conflicts, supports folders/tags/search, images, Markdown/ZIP import/export, dark mode and locking. Password and unlocked vault key stay in memory. Browser storage must be available; exports are plaintext. Only the self-hosted password vault is supported.
 
-Validation: `npm ci && npm run check && npm run build`; `scripts/test-integration.sh` tests against a disposable official server. Browser tests use `TEST_WEB_URL` and `TEST_PASSWORD` against a disposable deployment, never your live notes. Caddy snippet: `deploy/caddy.caddyfile`.
+Validation: `npm ci && npm run check && npm run build`; `scripts/test-integration.sh` tests against a disposable official server. Browser checks: install Chromium with `npx playwright install chromium`, then run `scripts/test-browser.sh` against its disposable stack, never your live notes. Caddy snippet: `deploy/caddy.caddyfile`.

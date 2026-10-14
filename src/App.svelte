@@ -10,12 +10,12 @@ let revision=$state(0),unlocked=$state(false),password=$state(''),busy=$state(fa
 let selectedId=$state(''),search=$state(''),folder=$state(''),tag=$state(''),mobileEditor=$state(false);
 let dialog=$state(''),name=$state(''),dark=$state(localStorage.getItem('theme')==='dark'),menu=$state(false);
 let frame:HTMLIFrameElement|undefined=$state(),imageInput:HTMLInputElement|undefined=$state(),importInput:HTMLInputElement|undefined=$state();
-let frameReady=false,editorId='',editorContent='',generation=0,editorBusy=false,lastActivity=Date.now();
+let frameReady=false,editorId='',editorContent='',generation=0,serializedGeneration=0,editorBusy=false,lastActivity=Date.now();
 let imageStamp='',imageURLs:Record<string,string>={};
 let releaseTab:(()=>void)|undefined;
 const flushes=new Map<string,{resolve:()=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
-const notes=$derived.by(()=>{revision;return vault.notes.filter(n=>!n.deleted&&isNote(n.path)).sort((a,b)=>b.modified-a.modified||a.path.localeCompare(b.path));});
-const selected=$derived.by(()=>{revision;return vault.notes.find(n=>n.id===selectedId&&!n.deleted);});
+const notes=$derived.by(()=>{revision;return vault.notes.filter(n=>!n.deleted&&isNote(n.path)).map(n=>({...n})).sort((a,b)=>b.modified-a.modified||a.path.localeCompare(b.path));});
+const selected=$derived.by(()=>{revision;const note=vault.notes.find(n=>n.id===selectedId&&!n.deleted);return note?{...note}:undefined;});
 const folders=$derived([...new Set(notes.map(n=>n.path.includes('/')?n.path.slice(0,n.path.lastIndexOf('/')):'').filter(Boolean))].sort());
 const tags=$derived([...new Set(notes.flatMap(n=>[...n.content.matchAll(/(?:^|\s)#([\p{L}\p{N}_/-]+)/gu)].map(m=>m[1])))].sort());
 const visible=$derived(notes.filter(n=>(!folder||n.path.startsWith(folder+'/'))&&(!tag||new RegExp(`(?:^|\\s)#${tag.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}(?=\\s|$|[.,!?])`,'u').test(n.content))&&(!search||(n.path+'\n'+n.content).toLowerCase().includes(search.toLowerCase()))));
@@ -38,7 +38,7 @@ function theme(){document.documentElement.dataset.theme=dark?'dark':'light';loca
 function refreshEditor(){
   if(!unlocked||!frameReady||!api()||!selected)return;
   const images=vault.notes.filter(n=>!n.deleted&&isImage(n.path));
-  const stamp=images.map(n=>`${n.id}:${n.modified}`).join('|');
+  const stamp=images.map(n=>`${n.id}:${n.version}:${n.path}:${n.modified}`).join('|');
   if(stamp!==imageStamp){Object.values(imageURLs).forEach(url=>URL.revokeObjectURL(url));imageURLs=vault.imageURLs();imageStamp=stamp;(frame!.contentWindow as any).__futoWebImages=imageURLs;api().setImageBaseUrl(`/web/missing-image/${Date.now()}/`);}
   const universe=notes.map(n=>({id:n.path.replace(/\.md$/i,''),title:title(n),modifiedMs:n.modified}));
   api().setNotes(JSON.stringify(universe));
@@ -48,11 +48,13 @@ function refreshEditor(){
 vault.onchange=()=>{revision++;queueMicrotask(refreshEditor);};
 async function flush(){
   if(!unlocked||!frameReady||!editorId||!api())return;
+  do {
   const token=crypto.randomUUID();
   await new Promise<void>((resolve,reject)=>{
     const timer=setTimeout(()=>{flushes.delete(token);reject(new Error('The editor did not finish saving. Keep this tab open and try again.'));},8000);
     flushes.set(token,{resolve,reject,timer});api().flush(token);
   });
+  } while(editorBusy);
 }
 vault.beforeSync=flush;vault.beforeRemote=flush;
 async function acquireTab(){
@@ -86,16 +88,30 @@ function download(filename:string,blob:Blob){const url=URL.createObjectURL(blob)
 async function exportAll(){await flush();const files:Record<string,Uint8Array>={};for(const n of vault.notes.filter(n=>!n.deleted))files[n.path]=isImage(n.path)?fromBase64(n.content):strToU8(n.content);download(`notes-${new Date().toISOString().slice(0,10)}.zip`,new Blob([zipSync(files)],{type:'application/zip'}));menu=false;}
 async function importFiles(files:FileList|null){
   if(!files)return;await flush();
+  const entries:Record<string,Uint8Array>={};let total=0;
   for(const file of files){
     if(file.size>50*1024*1024)throw new Error('Imports are limited to 50 MB per file.');
-    const entries=/\.zip$/i.test(file.name)?unzipSync(new Uint8Array(await file.arrayBuffer()),{filter:entry=>entry.originalSize<=20*1024*1024}):{[file.name]:new Uint8Array(await file.arrayBuffer())};
-    let total=0;
-    for(const [original,bytes] of Object.entries(entries)){
-      total+=bytes.length;if(total>100*1024*1024)throw new Error('Unpacked imports are limited to 100 MB.');
-      if(!isNote(original)&&!isImage(original))continue;let path=validPath(original);
-      if(vault.notes.some(n=>!n.deleted&&n.path===path))path=path.replace(/(\.[^/.]+)$/,` (import ${crypto.randomUUID().slice(0,6)})$1`);
-      await vault.create(path,isImage(path)?toBase64(bytes):strFromU8(bytes));
+    const unpacked=/\.zip$/i.test(file.name)?unzipSync(new Uint8Array(await file.arrayBuffer()),{filter:entry=>{
+      if(!isNote(entry.name)&&!isImage(entry.name))return false;
+      validPath(entry.name);total+=entry.originalSize;
+      if(entry.originalSize>20*1024*1024||total>100*1024*1024)throw new Error('Imports are limited to 20 MB per entry and 100 MB in total.');
+      return true;
+    }}):{[file.name]:new Uint8Array(await file.arrayBuffer())};
+    Object.assign(entries,unpacked);
+  }
+  const renamedImages=new Map<string,string>();
+  const order=Object.entries(entries).sort(([a],[b])=>Number(isNote(a))-Number(isNote(b)));
+  for(const [original,bytes] of order){
+    if(!isNote(original)&&!isImage(original))continue;
+    let path=validPath(original),content=isImage(path)?toBase64(bytes):strFromU8(bytes);
+    const existing=vault.notes.find(n=>!n.deleted&&n.path===path);
+    if(existing){
+      if(isImage(path)&&existing.content===content)continue;
+      path=path.replace(/(\.[^/.]+)$/,` (import ${crypto.randomUUID().slice(0,6)})$1`);
+      if(isImage(original))renamedImages.set(original,path);
     }
+    if(isNote(path))for(const [oldPath,newPath] of renamedImages)content=content.replaceAll(`](${oldPath})`,`](${newPath})`);
+    await vault.create(path,content);
   }
   if(!selectedId)selectedId=notes[0]?.id||'';uiError='';menu=false;queueMicrotask(refreshEditor);
 }
@@ -108,10 +124,10 @@ async function onMessage(event:MessageEvent){
       if(message.version!==9)throw new Error('The editor bridge changed. Reload or rebuild the web client.');
       frameReady=true;editorId=selected?.id||'';editorContent=selected?.content||'';
       api().initialize(JSON.stringify({bridgeVersion:9,theme:dark?'dark':'light',noteId:editorId,content:editorContent,nativeToolbar:true,contentPaddingInlinePx:32,languageTag:'en'}));refreshEditor();
-    }else if(message.type==='documentLoaded'){if(message.noteId===editorId)generation=message.generation;}
+    }else if(message.type==='documentLoaded'){if(message.noteId===editorId){generation=message.generation;serializedGeneration=generation;editorBusy=false;}}
     else if(message.type==='edited'){if(message.noteId===editorId){generation=message.generation;editorBusy=true;lastActivity=Date.now();}}
     else if(message.type==='change'){
-      if(message.noteId===editorId){editorContent=message.content;generation=message.generation;editorBusy=false;}
+      if(message.noteId===editorId){editorContent=message.content;serializedGeneration=message.generation;generation=Math.max(generation,serializedGeneration);editorBusy=serializedGeneration!==generation;}
       await vault.edit(message.noteId,message.content);
       if(message.flushToken){const waiter=flushes.get(message.flushToken);if(waiter){clearTimeout(waiter.timer);flushes.delete(message.flushToken);waiter.resolve();}}
     }else if(message.type==='flushFailed'){

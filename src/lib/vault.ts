@@ -122,6 +122,7 @@ export class Vault {
   private async push(note:Note){
     if(!note.dirty&&!note.intent)return;
     if(!note.remoteId&&note.deleted&&!note.intent){this.notes=this.notes.filter(n=>n!==note);await this.persist();return;}
+    // Delete guards name the CURRENT object version; writes name the NEXT version.
     if(!note.intent){note.intent={id:crypto.randomUUID(),path:note.path,content:note.content,deleted:note.deleted,remoteId:note.remoteId,version:note.deleted?note.version:note.version+1};await this.persist();}
     const intent=note.intent;
     await this.persist();
