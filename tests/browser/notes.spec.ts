@@ -57,6 +57,12 @@ test('password, full editing, mobile sync, rename, images, export and delete', a
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  const home = await page.request.get('/', {
+    headers: { Accept: 'text/html' },
+    maxRedirects: 0,
+  });
+  expect(home.status()).toBe(302);
+  expect(home.headers().location).toBe('/web/');
   await page.goto('/web/');
   await page.getByLabel('Sync password').fill('wrong-password');
   await page.getByRole('button', { name: 'Unlock notes' }).click();
