@@ -39,6 +39,18 @@ describe.skipIf(!base)('real FUTO server interoperability', () => {
     for (const v of vaults.splice(0)) await v.lock();
     await forgetCache();
   });
+  it('uses the configured lifetime in its secure login cookie', async () => {
+    const result = await fetch(base + '/api/auth/password/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    expect(result.status).toBe(200);
+    const cookie = result.headers.get('set-cookie')!;
+    expect(cookie).toContain('Max-Age=120');
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('Secure');
+  });
   it('creates, edits, renames and deletes notes across devices', async () => {
     const a = await device(),
       b = await device();

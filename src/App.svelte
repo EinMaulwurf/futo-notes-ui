@@ -1,11 +1,21 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import {
+    getConfig,
+    formatDuration,
+    DEFAULT_REMEMBER_MINUTES,
+  } from './lib/config';
+  import { rememberedUnlock } from './lib/storage';
   import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
   import Icon from './Icon.svelte';
   import { Vault, isNote, type Note } from './lib/vault';
   import { isImage, mime, fromBase64, toBase64, validPath } from './lib/crypto';
 
   const vault = new Vault();
+  let rememberBrowser = $state(false);
+  let rememberMinutes = $state(DEFAULT_REMEMBER_MINUTES);
+  let restoring = $state(true);
+  let locking = false;
   let revision = $state(0),
     unlocked = $state(false),
     password = $state(''),
@@ -93,6 +103,10 @@
             .includes(search.toLowerCase())),
     ),
   );
+  const rememberedUntil = $derived.by(() => {
+    revision;
+    return vault.rememberedUntil;
+  });
   const status = $derived.by(() => {
     revision;
     return vault.status;
@@ -259,7 +273,7 @@
       if (!crypto.subtle)
         throw new Error('Open this app over HTTPS to unlock your notes.');
       await acquireTab();
-      await vault.unlock(password);
+      await vault.unlock(password, rememberBrowser ? rememberMinutes : 0);
       password = '';
       unlocked = true;
       selectedId = notes[0]?.id || '';
@@ -273,8 +287,17 @@
     }
   }
   async function lock() {
-    await flush();
-    await vault.lock();
+    if (locking) return;
+    locking = true;
+    try {
+      await flush();
+      await vault.lock();
+      clearUnlockedView();
+    } finally {
+      locking = false;
+    }
+  }
+  function clearUnlockedView() {
     unlocked = false;
     frameReady = false;
     editorId = '';
@@ -288,6 +311,43 @@
     imageStamp = '';
     releaseTab?.();
     releaseTab = undefined;
+    rememberBrowser = false;
+  }
+  async function restoreBrowser() {
+    busy = true;
+    restoring = true;
+    try {
+      rememberMinutes = (await getConfig()).rememberBrowserMinutes;
+      if (await rememberedUnlock(rememberMinutes)) {
+        await acquireTab();
+        if (await vault.resumeRemembered(rememberMinutes)) {
+          unlocked = true;
+          selectedId = notes[0]?.id || '';
+          lastActivity = Date.now();
+        } else {
+          releaseTab?.();
+          releaseTab = undefined;
+        }
+      }
+    } catch (error) {
+      loginError = error instanceof Error ? error.message : String(error);
+      releaseTab?.();
+      releaseTab = undefined;
+    } finally {
+      busy = false;
+      restoring = false;
+    }
+  }
+  function checkLock() {
+    if (!unlocked || locking) return;
+    if (vault.rememberedUntil) {
+      if (Date.now() >= vault.rememberedUntil)
+        void action(async () => {
+          await lock();
+          loginError =
+            'Your remembered unlock expired. Enter your password again.';
+        });
+    } else if (Date.now() - lastActivity > 15 * 60 * 1000) void action(lock);
   }
   async function select(note: Note) {
     await flush();
@@ -497,6 +557,7 @@
   }
   onMount(() => {
     theme();
+    void restoreBrowser();
     window.addEventListener('message', onMessage);
     const activity = () => {
       lastActivity = Date.now();
@@ -513,15 +574,15 @@
     const online = () => void vault.sync();
     window.addEventListener('online', online);
     const hidden = () => {
+      if (!document.hidden) checkLock();
       if (document.hidden && unlocked) void action(flush);
     };
     document.addEventListener('visibilitychange', hidden);
-    const idle = setInterval(() => {
-      if (unlocked && Date.now() - lastActivity > 15 * 60 * 1000)
-        void action(lock);
-    }, 15000);
+    const idle = setInterval(checkLock, 15000);
+    window.addEventListener('focus', checkLock);
     return () => {
       clearInterval(idle);
+      window.removeEventListener('focus', checkLock);
       window.removeEventListener('message', onMessage);
       window.removeEventListener('pointerdown', activity);
       window.removeEventListener('keydown', activity);
@@ -559,9 +620,25 @@
           placeholder="Enter your password"
         />
       </div>
+      <label class="remember-option"
+        ><input
+          type="checkbox"
+          bind:checked={rememberBrowser}
+          disabled={busy}
+        /><span
+          >Remember this browser for {formatDuration(rememberMinutes)}</span
+        ></label
+      >
+      <p class="remember-hint">
+        Use this on a personal device. Lock notes to forget this browser.
+      </p>
       {#if loginError}<p class="form-error" role="alert">{loginError}</p>{/if}
       <button class="primary unlock-button" type="submit" disabled={busy}
-        >{busy ? 'Opening your notes…' : 'Unlock notes'}<span>→</span></button
+        >{busy
+          ? restoring
+            ? 'Opening…'
+            : 'Opening your notes…'
+          : 'Unlock notes'}<span>→</span></button
       >
       <div class="privacy-note">
         <Icon name="lock" size={14} /><span
@@ -859,7 +936,9 @@
       ></iframe>
       <footer class="document-footer">
         <span>Markdown · End-to-end encrypted</span><span
-          >Locks after 15 minutes of inactivity</span
+          >{#if rememberedUntil}Remembered until {new Date(
+              rememberedUntil,
+            ).toLocaleString()}{:else}Locks after 15 minutes of inactivity{/if}</span
         >
       </footer>
     </section>
@@ -929,7 +1008,8 @@
       {:else}<h2 id="dialog-title">Your notes, your server.</h2>
         <p>
           This personal browser client reuses FUTO Notes’ editor, modified with
-          a browser host and local image bridge. <a
+          a browser host and local image bridge. Its FUTO sync server has a
+          small configurable-session patch. <a
             href="/web/FUTO-LICENSE.md"
             target="_blank"
             rel="noreferrer">FUTO license</a
@@ -937,8 +1017,9 @@
         </p>
         <p>
           Your browser stores encrypted notes and pending edits. Your password
-          and unlocked key stay in memory. Locking hides your notes and ends
-          this browser’s server session.
+          stays in memory. If you choose Remember this browser, its encryption
+          key is saved locally until the displayed deadline. Locking clears that
+          remembered key and ends this browser’s server session.
         </p>
         <p>
           Exports contain readable Markdown and images. Keep them somewhere
@@ -950,10 +1031,7 @@
               action(async () => {
                 await flush();
                 await vault.forget();
-                unlocked = false;
-                releaseTab?.();
-                releaseTab = undefined;
-                dialog = '';
+                clearUnlockedView();
               })}>Forget this browser</button
           ><button class="primary" onclick={() => (dialog = '')}>Done</button>
         </div>{/if}

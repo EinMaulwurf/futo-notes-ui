@@ -1,0 +1,13 @@
+# Same release as the deployed official image, plus the session-duration patch.
+FROM golang:1.27-bookworm AS builder
+ARG FUTO_SERVER_COMMIT=1e498eb9b44e81e8c9dae14f5d37eeb865efe410
+WORKDIR /src
+RUN git init && git remote add origin https://gitlab.futo.org/futo-notes/futo-notes-server.git && git fetch --depth 1 origin ${FUTO_SERVER_COMMIT} && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "${FUTO_SERVER_COMMIT}"
+COPY deploy/server/session-lifetime.patch /tmp/session-lifetime.patch
+RUN git apply --check /tmp/session-lifetime.patch && git apply /tmp/session-lifetime.patch
+COPY deploy/server/session_lifetime*.go ./internal/auth/
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build gofmt -w internal/auth/session_lifetime*.go && go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.serverVersion=v0.7.1-browser-ttl" -o /out/futo-notes-server ./cmd/server
+
+FROM futotech/notes-server:stable@sha256:39d4b003f80bdc2025a5304d1e229945bc8fdd2cabcbd136c857079229e977aa
+COPY --from=builder /out/futo-notes-server /usr/local/bin/futo-notes-server
+COPY --from=builder /src/LICENSE.md /usr/local/share/futo-notes-server/LICENSE.md

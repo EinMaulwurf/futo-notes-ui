@@ -784,3 +784,25 @@ hr {
     display: none;
   }
 }
+.unlock-card > .remember-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 18px 0 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.remember-option input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.unlock-card > .remember-hint {
+  font-size: 10px;
+  line-height: 1.5;
+  margin: 6px 0 0 24px;
+}

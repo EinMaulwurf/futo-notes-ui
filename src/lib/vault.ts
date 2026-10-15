@@ -20,6 +20,10 @@ import {
   loadCache,
   saveCache,
   forgetCache,
+  saveRememberedUnlock,
+  clearRememberedUnlock,
+  rememberedUnlock,
+  type Metadata,
 } from './storage';
 export interface ServerObject {
   id: string;
@@ -67,6 +71,7 @@ export class Vault {
   notice = '';
   pendingDisk = 0;
   stopped = false;
+  rememberedUntil = 0;
   api: Api;
   onchange: () => void = () => {};
   beforeSync: () => Promise<void> = async () => {};
@@ -115,7 +120,7 @@ export class Vault {
       },
     );
   }
-  async unlock(password: string): Promise<void> {
+  async unlock(password: string, rememberMinutes = 0): Promise<void> {
     this.stopped = false;
     this.error = '';
     const cachedMeta = await metadata();
@@ -152,6 +157,38 @@ export class Vault {
       throw new Error(
         'The server vault changed. Export the old browser notes offline before clearing its storage.',
       );
+    await this.openCache(meta, key);
+    await clearRememberedUnlock();
+    this.rememberedUntil = 0;
+    if (
+      rememberMinutes > 0 &&
+      this.api.sessionStartedAt > 0 &&
+      this.status !== 'offline'
+    ) {
+      const createdAt = this.api.sessionStartedAt;
+      const expiresAt = createdAt + rememberMinutes * 60000;
+      if (expiresAt > Date.now()) {
+        try {
+          await saveRememberedUnlock({
+            schema: 1,
+            collectionId: meta.collectionId,
+            key,
+            createdAt,
+            expiresAt,
+          });
+          this.rememberedUntil = expiresAt;
+        } catch {
+          this.notice =
+            'This browser could not remember the unlock. You will need your password next time.';
+        }
+      }
+    }
+    if (rememberMinutes > 0 && this.status === 'offline')
+      this.notice =
+        'Reconnect before remembering this browser. Your notes are open for this visit.';
+    await this.startSync();
+  }
+  private async openCache(meta: Metadata, key: CryptoKey): Promise<void> {
     const saved = await loadCache<Snapshot>(meta.collectionId, key);
     if (saved && saved.schema !== 1)
       throw new Error('Unsupported browser storage format.');
@@ -160,16 +197,54 @@ export class Vault {
     this.collectionId = meta.collectionId;
     this.notes = saved?.notes || [];
     this.cursor = saved?.cursor || 0;
+    this.stopped = false;
     await saveMetadata(meta);
+  }
+  async resumeRemembered(minutes: number): Promise<boolean> {
+    const remembered = await rememberedUnlock(minutes);
+    if (!remembered) return false;
+    const meta = await metadata();
+    if (!meta || meta.collectionId !== remembered.collectionId) {
+      await clearRememberedUnlock();
+      return false;
+    }
+    this.status = 'saving';
+    try {
+      await this.api.request('/api/auth');
+      const { collections } = await this.api.request('/api/collections');
+      if (collections[0]?.id !== meta.collectionId) {
+        await clearRememberedUnlock();
+        return false;
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status < 500) {
+        await clearRememberedUnlock();
+        return false;
+      }
+      this.status = 'offline';
+    }
+    try {
+      await this.openCache(meta, remembered.key);
+    } catch {
+      await clearRememberedUnlock();
+      return false;
+    }
+    this.rememberedUntil = remembered.expiresAt;
+    await this.startSync();
+    return true;
+  }
+  private async startSync(): Promise<void> {
     this.emit();
     if (this.status !== 'offline') await this.sync();
+    clearInterval(this.poll);
+    this.events?.close();
     this.poll = setInterval(() => void this.sync(), 30000);
     if (!this.api.base && typeof EventSource !== 'undefined') {
       this.events = new EventSource('/api/sync/events');
       this.events.addEventListener('ready', () => void this.sync());
       this.events.addEventListener('change', () => void this.sync());
       this.events.onerror = () => {
-        if (!navigator.onLine) {
+        if (navigator.onLine === false) {
           this.status = 'offline';
           this.emit();
         }
@@ -177,6 +252,8 @@ export class Vault {
     }
   }
   async lock(): Promise<void> {
+    await clearRememberedUnlock();
+    this.rememberedUntil = 0;
     this.stopped = true;
     clearTimeout(this.timer);
     clearInterval(this.poll);
@@ -197,9 +274,7 @@ export class Vault {
   }
   async forget() {
     if (this.notes.some((n) => n.dirty || n.intent))
-      throw new Error(
-        'Sync or export pending notes before forgetting this browser.',
-      );
+      throw new Error('Sync pending notes before forgetting this browser.');
     await this.lock();
     await forgetCache();
   }
@@ -434,6 +509,12 @@ export class Vault {
     if (this.syncing) return this.syncing;
     this.syncing = this.runSync()
       .catch((error) => {
+        if (
+          error instanceof ApiError &&
+          error.status === 401 &&
+          this.rememberedUntil
+        )
+          this.rememberedUntil = Date.now();
         this.status = error instanceof ApiError ? 'error' : 'offline';
         this.error =
           error instanceof ApiError

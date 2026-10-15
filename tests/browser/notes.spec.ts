@@ -324,3 +324,148 @@ test('preserves typing when another device sends an update', async ({
     'Phone edit during incoming sync.',
   );
 });
+
+async function storedRemembered(page: any) {
+  return page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('futo-notes-web');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    return new Promise<any>((resolve, reject) => {
+      const request = database
+        .transaction('vault')
+        .objectStore('vault')
+        .get('remembered-unlock');
+      request.onsuccess = () => {
+        const record = request.result;
+        resolve(
+          record
+            ? {
+                createdAt: record.createdAt,
+                expiresAt: record.expiresAt,
+                extractable: record.key.extractable,
+                fields: Object.keys(record),
+              }
+            : null,
+        );
+      };
+      request.onerror = () => reject(request.error);
+    });
+  });
+}
+test('remember browser survives reload, reopening and offline use; Lock forgets it', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/web/');
+  const checkbox = page.getByRole('checkbox', {
+    name: 'Remember this browser for 2 minutes',
+  });
+  await expect(checkbox).not.toBeChecked();
+  await checkbox.check();
+  await unlock(page);
+  await create(page, 'Remembered note');
+  const editor = page
+    .frameLocator('iframe')
+    .locator('[contenteditable=true]')
+    .first();
+  await editor.fill('Remember this encrypted note.');
+  await expect(page.locator('.sync-status')).toContainText(
+    'All changes saved',
+    { timeout: 20000 },
+  );
+  const original = await storedRemembered(page);
+  expect(original.extractable).toBe(false);
+  expect(original.expiresAt - original.createdAt).toBe(120000);
+  expect(original.fields).not.toContain('password');
+  expect(original.fields).not.toContain('token');
+  const session = (await context.cookies()).find(
+    (cookie) => cookie.name === 'session',
+  )!;
+  expect(session.httpOnly).toBe(true);
+  expect(session.secure).toBe(true);
+  expect(session.expires - Date.now() / 1000).toBeGreaterThan(90);
+  expect(session.expires - Date.now() / 1000).toBeLessThanOrEqual(121);
+  const config = await page.request.get('/web/config.json');
+  expect(config.headers()['cache-control']).toContain('no-store');
+  expect((await config.json()).rememberBrowserMinutes).toBe(2);
+  await page.reload();
+  await expect(page.locator('.workspace')).toBeVisible();
+  expect((await storedRemembered(page)).expiresAt).toBe(original.expiresAt);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await context.setOffline(true);
+  await page.reload();
+  await expect(page.locator('.workspace')).toBeVisible();
+  await expect(
+    page.frameLocator('iframe').locator('[contenteditable=true]').first(),
+  ).toContainText('Remember this encrypted note.');
+  await context.setOffline(false);
+  await page.close();
+  const reopened = await context.newPage();
+  await reopened.goto('/web/');
+  await expect(reopened.locator('.workspace')).toBeVisible();
+  await reopened.getByLabel('Lock notes').click();
+  await expect(
+    reopened.getByRole('button', { name: 'Unlock notes' }),
+  ).toBeVisible();
+  expect(await storedRemembered(reopened)).toBeNull();
+  expect((await reopened.request.get('/api/auth')).status()).toBe(401);
+  await reopened.reload();
+  await expect(
+    reopened.getByRole('button', { name: 'Unlock notes' }),
+  ).toBeVisible();
+  await expect(reopened.getByRole('checkbox')).not.toBeChecked();
+});
+test('remember browser stays opt-in and rejects a revoked session', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/web/');
+  await unlock(page);
+  expect(await storedRemembered(page)).toBeNull();
+  await page.reload();
+  await expect(
+    page.getByRole('button', { name: 'Unlock notes' }),
+  ).toBeVisible();
+  await page.getByRole('checkbox').check();
+  await unlock(page);
+  expect(await storedRemembered(page)).not.toBeNull();
+  await context.clearCookies();
+  await page.reload();
+  await expect(
+    page.getByRole('button', { name: 'Unlock notes' }),
+  ).toBeVisible();
+  expect(await storedRemembered(page)).toBeNull();
+});
+test('remember browser expires while open and keeps encrypted notes for the next unlock', async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.goto('/web/');
+  await page.getByRole('checkbox').check();
+  await unlock(page);
+  await create(page, 'Kept after expiry');
+  await page.clock.fastForward(135000);
+  await expect(
+    page.getByRole('button', { name: 'Unlock notes' }),
+  ).toBeVisible();
+  expect(await storedRemembered(page)).toBeNull();
+  await expect(page.getByRole('alert')).toContainText('expired');
+  await unlock(page);
+  await expect(page.locator('.note-list')).toContainText('Kept after expiry');
+});
+test('remember browser is cleared by Forget this browser', async ({ page }) => {
+  await page.goto('/web/');
+  await page.getByRole('checkbox').check();
+  await unlock(page);
+  expect(await storedRemembered(page)).not.toBeNull();
+  await page.getByLabel('Note actions').click();
+  await page.getByRole('button', { name: 'About & browser storage' }).click();
+  await page.getByRole('button', { name: 'Forget this browser' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Unlock notes' }),
+  ).toBeVisible();
+  await expect(page.getByRole('checkbox')).not.toBeChecked();
+  expect(await storedRemembered(page)).toBeNull();
+});

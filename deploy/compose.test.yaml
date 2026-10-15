@@ -1,11 +1,14 @@
 # Disposable QA stack: never mounts the live vault.
 services:
   sync:
-    image: futotech/notes-server:stable
+    image: futo_notes-sync:local
     environment:
       FUTO_NOTES_PASSWORD: browser-test-only-password
       COOKIE_SECURE: "true"
+      REMEMBER_BROWSER_MINUTES: ${REMEMBER_BROWSER_MINUTES:-2}
     tmpfs: [/data]
   web:
     image: futo_notes-web:latest
+    environment:
+      REMEMBER_BROWSER_MINUTES: ${REMEMBER_BROWSER_MINUTES:-2}
     ports: ["127.0.0.1:13006:8080"]

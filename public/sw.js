@@ -34,7 +34,8 @@ self.addEventListener('fetch', (event) => {
     event.request.method !== 'GET' ||
     url.origin !== self.location.origin ||
     !url.pathname.startsWith('/web/') ||
-    url.pathname === '/web/sw.js'
+    url.pathname === '/web/sw.js' ||
+    url.pathname === '/web/config.json'
   )
     return;
   event.respondWith(

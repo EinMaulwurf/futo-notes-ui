@@ -16,6 +16,7 @@ RUN npm run check && npm run build
 
 FROM nginx:stable-alpine
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY deploy/40-browser-config.sh /docker-entrypoint.d/40-browser-config.sh
 COPY --from=web /app/dist /usr/share/nginx/html/web
 COPY --from=editor /output/web /usr/share/nginx/html/web
 COPY --from=editor /output/nginx/editor-csp.conf /etc/nginx/editor-csp.conf

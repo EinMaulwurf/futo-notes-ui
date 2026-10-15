@@ -1,0 +1,12 @@
+diff --git a/internal/auth/session.go b/internal/auth/session.go
+--- a/internal/auth/session.go
++++ b/internal/auth/session.go
+@@ -13,7 +13,7 @@ import (
+ 	"futo-notes-server/internal/db"
+ )
+ 
+-const SessionTTL = 7 * 24 * time.Hour
++var SessionTTL = configuredSessionTTL()
+ 
+ // GenerateToken returns a raw session token: 32 random bytes, hex-encoded.
+ func GenerateToken() string {

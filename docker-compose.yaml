@@ -1,8 +1,12 @@
 services:
   sync:
-    image: futotech/notes-server:stable
+    image: futo_notes-sync:local
+    build:
+      context: .
+      dockerfile: Dockerfile.sync
     restart: unless-stopped
     environment:
+      REMEMBER_BROWSER_MINUTES: ${REMEMBER_BROWSER_MINUTES:-10080}
       AUTH_MODE: password
       FUTO_NOTES_PASSWORD_HASH: ${FUTO_NOTES_PASSWORD_HASH:?Run scripts/setup-password.py first}
       COOKIE_SECURE: "true"
@@ -15,6 +19,8 @@ services:
     networks: [notes]
   web:
     build: .
+    environment:
+      REMEMBER_BROWSER_MINUTES: ${REMEMBER_BROWSER_MINUTES:-10080}
     restart: unless-stopped
     ports:
       - "127.0.0.1:${FUTO_NOTES_PORT:-3005}:8080"

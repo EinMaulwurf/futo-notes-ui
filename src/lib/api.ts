@@ -13,6 +13,7 @@ export class ApiError extends Error {
   }
 }
 export class Api {
+  sessionStartedAt = 0;
   constructor(
     public base = '',
     public token = '',
@@ -43,12 +44,14 @@ export class Api {
       : response.json();
   }
   async login(password: string): Promise<void> {
+    const startedAt = Date.now();
     try {
       const result = await this.request('/api/auth/password/login', {
         method: 'POST',
         body: JSON.stringify({ password }),
       });
       this.token = result.token;
+      this.sessionStartedAt = startedAt;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401)
         error.message = 'Incorrect sync password.';
