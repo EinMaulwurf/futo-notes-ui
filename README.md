@@ -2,8 +2,8 @@
 
 Personal Docker stack: the FUTO v0.7.1 encrypted sync server with a small configurable-session patch and a full browser client using FUTO's editor. Browser host and image integration are modified; FUTO editing behavior and license notices are retained. Upstream editor revision is pinned in `Dockerfile`.
 
-- Browser: **https://futo-notes.maulwurf.fun/web/**
-- Android server URL: **https://futo-notes.maulwurf.fun**
+- Browser: **https://your-domain.example/web/**
+- Android server URL: **https://your-domain.example**
 - Both use the same sync password. No additional Caddy/OAuth login.
 
 Initialize a **new** vault with `python3 scripts/setup-password.py`, save `.sync-password` in your password manager and delete that file. Then run `docker compose up -d --build`. Existing credentials must not be changed without rewrapping the vault key. Secrets, runtime data and browser caches are ignored by Git.
